@@ -3,4 +3,4 @@ env
 *.pyc
 venv/**
 venv
-
+**.db
