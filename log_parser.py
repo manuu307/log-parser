@@ -22,12 +22,18 @@ class LogParser:
         self.run_settings = run_settings
         self.log_files = run_settings.log_files 
         
+        # Threading
+        self.active_threads = 0
+        self.thread_lock = threading.Lock() 
+        
         # verify state
         if self.run_settings.express:
             self.run_settings.handle_state = False
             self.run_settings.force_state_searching = False
+        
         # Initialize Pipelines
         self.pipeline = Pipelines()
+        
         # Call open pipeline when LogSpider initializes
         self.pipeline.open_pipeline()
 
@@ -52,16 +58,15 @@ class LogParser:
             print("[-] File not found:", file_not_found_error.filename)
         
 
-    def process_log_file(self, log_file, force_state_file_name=None):
+    def process_log_file(self, log_file, force_state_file_name=None, resume_line_found=False):
         if log_file:
             # declare state management variables
             file_path_string = log_file['file_path'] if force_state_file_name is None else force_state_file_name
             self.file_previous_state = check_file_in_database(file_path_string)
             self.current_state = []
-            self.state_handler_conditional = lambda line: self.file_previous_state is not None and line == self.file_previous_state[2] or not self.file_previous_state 
-            #self.state_handler_conditional = lambda line: self.file_previous_state is not None and line == self.file_previous_state[2] and line_number == self.file_previous_state[3] or not self.file_previous_state 
+            self.state_handler_conditional = lambda line, line_number: self.file_previous_state is not None and line == self.file_previous_state[2] and line_number == self.file_previous_state[3] or not self.file_previous_state 
             
-            self.read_lines(log_file)
+            self.read_lines(log_file, resume_line_found=resume_line_found)
 
             if self.run_settings.handle_state and self.resume_line_found:
                 
@@ -78,18 +83,19 @@ class LogParser:
                     print("[!] Force state searching in backup files that goes by the same name under the same path...")
                     self.auto_search_state_line(file_path_string)
 
-    def read_lines(self, file_path, looking_for_resume_line_only=False):
+    def read_lines(self, file_path, looking_for_resume_line_only=False, resume_line_found=False):
+        self.resume_line_found = resume_line_found
+        
         ## testing
         if 'gz' in file_path['file_path']:
             file_path = self.open_file(file_path['file_path'])
 
-        self.resume_line_found = False
         # start processing lines
         for line_number, line_value in enumerate(file_path['file'], start=1):
             line = str(line_value).strip()
             
             # state verifications
-            if self.state_handler_conditional(line):
+            if self.state_handler_conditional(line, line_number):
                 self.resume_line_found = True
             
                 if looking_for_resume_line_only:
@@ -163,7 +169,7 @@ class LogParser:
             for index in range(found_file_index, -1, -1):
                 print("[*] Processing file:", related_log_file_list[index])
                 file_content = self.open_file(os.path.join(folder_path, file))
-                self.process_log_file(file_content, force_state_file_name=log_file_path)
+                self.process_log_file(file_content, force_state_file_name=log_file_path, resume_line_found=True)
 
 
     def list_log_files_in_path(self, folder_path, file_name):
@@ -175,24 +181,30 @@ class LogParser:
         
         return related_files
 
+    def run_thread(self, file):
+        log_file = self.open_file(file)
+        self.process_log_file(log_file)
+
     def run(self):
         threads = []
 
         for file in self.log_files:
-            if len(threads) >= self.run_settings.thread_num:
-                # If the maximum number of threads is reached, wait for them to finish
-                for thread in threads:
-                    thread.join()
-                threads = []  # Reset threads List
-            
-            log_file = self.open_file(file)
-            thread = threading.Thread(target=self.process_log_file, args=(log_file,))
-            threads.append(thread)
-            thread.start()
+            with self.thread_lock:
+                if self.active_threads >= self.run_settings.thread_num:
+                    # Wait for a thread to finish if the limit is reached
+                    for thread in threads:
+                        thread.join()
+                    threads = []
+                    self.active_threads = 0
+
+                thread = threading.Thread(target=self.run_thread, args=(file,))
+                threads.append(thread)
+                thread.start()
+                self.active_threads += 1
 
         for thread in threads:
             thread.join()
-        
+
         # Call end pipeline when LogSpider finishes
         self.pipeline.end_pipeline()
         print("[+] Done!")
