@@ -22,10 +22,6 @@ class LogParser:
         self.run_settings = run_settings
         self.log_files = run_settings.log_files 
         
-        # Threading
-        self.active_threads = 0
-        self.thread_lock = threading.Lock() 
-        
         # verify state
         if self.run_settings.express:
             self.run_settings.handle_state = False
@@ -181,29 +177,10 @@ class LogParser:
         
         return related_files
 
-    def run_thread(self, file):
-        log_file = self.open_file(file)
-        self.process_log_file(log_file)
-
     def run(self):
-        threads = []
-
         for file in self.log_files:
-            with self.thread_lock:
-                if self.active_threads >= self.run_settings.thread_num:
-                    # Wait for a thread to finish if the limit is reached
-                    for thread in threads:
-                        thread.join()
-                    threads = []
-                    self.active_threads = 0
-
-                thread = threading.Thread(target=self.run_thread, args=(file,))
-                threads.append(thread)
-                thread.start()
-                self.active_threads += 1
-
-        for thread in threads:
-            thread.join()
+            log_file = self.open_file(file)
+            self.process_log_file(log_file)
 
         # Call end pipeline when LogSpider finishes
         self.pipeline.end_pipeline()
