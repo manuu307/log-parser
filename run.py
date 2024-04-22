@@ -8,7 +8,6 @@ from config import LOG_FILE_PATHS
 run_settings = Settings(
     log_files=LOG_FILE_PATHS,
     express=False,
-    # TO DO: implement the state managment
     handle_state=True,
     parsers=[stalk_user, reg_login, afterhour_check],
     force_state_searching=True
